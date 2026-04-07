@@ -1,0 +1,29 @@
+# Virtual environment
+.venv/
+
+# Log files
+*.log
+etl_pipeline.txt
+model_training.txt
+predict.txt
+
+# MLflow runs (large, can be regenerated)
+mlruns/
+
+# Model artifacts (large, can be regenerated)
+models/*.pkl
+
+# Data files (too large for GitHub)
+*.csv
+bronze/
+silver/
+gold/
+predictions/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS files
+.DS_Store
+Thumbs.db
