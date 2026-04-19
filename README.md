@@ -92,6 +92,9 @@ Healthcare No-Shows Appointments Dataset from Kaggle — 107K appointments from 
 
 **Features engineered:** lead_time, day_of_week, is_weekend, hour_of_day, age_group, chronic_condition_count, neighbourhood_noshow_rate
 
+## Authors
+Kate Hattemer, Sam Heathcote, Ankit Mishra, Gokul Reddy, Natalie Youngquist
+
 ## Tech Stack
 
 Python, Pandas, scikit-learn, SHAP, MLflow, Streamlit, PyArrow
