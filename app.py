@@ -1,19 +1,15 @@
 """
 Streamlit Dashboard: Patient No-Show Risk Dashboard
-Displays predictions, model performance, and patient lookup.
+Displays no-show risk scores and patient lookup for clinical staff.
 
-Author: Ankit Mishra
+Author: Ankit Mishra, Kate Hattemer, Claude
 Run: streamlit run app.py
 """
 
 import os
 import pickle
-import numpy as np
 import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt
-import shap
-from sklearn.metrics import roc_curve
 
 # ──────────────────────────────────────────────
 # Page Config
@@ -32,38 +28,111 @@ st.set_page_config(
 st.markdown("""
 <style>
     .main-header {
-        background: linear-gradient(135deg, #1B3A5C 0%, #2E6B9E 100%);
-        padding: 1.5rem 2rem;
+        background: #1B3A5C;
+        padding: 1.25rem 1.75rem;
         border-radius: 10px;
         margin-bottom: 1.5rem;
     }
-    .main-header h1 { color: white; margin: 0; font-size: 1.8rem; }
-    .main-header p { color: #B0C4DE; margin: 0.3rem 0 0; font-size: 0.9rem; }
-    .kpi-card {
-        background: white;
-        border: 1px solid #E0E0E0;
-        border-radius: 10px;
-        padding: 1.2rem;
-        text-align: center;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+    .main-header h1 {
+        color: white;
+        margin: 0;
+        font-size: 1.6rem;
+        font-weight: 600;
     }
-    .kpi-card h3 { color: #1B3A5C; font-size: 1.8rem; margin: 0; }
-    .kpi-card p { color: #666; font-size: 0.85rem; margin: 0.3rem 0 0; }
-    .risk-high { background-color: #FFCCCC; color: #CC0000; padding: 2px 8px; border-radius: 4px; font-weight: bold; }
-    .risk-medium { background-color: #FFE0B2; color: #E65100; padding: 2px 8px; border-radius: 4px; font-weight: bold; }
-    .risk-low { background-color: #FFF9C4; color: #F57F17; padding: 2px 8px; border-radius: 4px; font-weight: bold; }
+    .main-header p {
+        color: #B0C4DE;
+        margin: 0.25rem 0 0;
+        font-size: 0.85rem;
+    }
+    .kpi-card {
+        background: #F8F9FA;
+        border: 1px solid #E5E7EB;
+        border-radius: 10px;
+        padding: 1.1rem 1.25rem;
+        text-align: center;
+    }
+    .kpi-card h3 {
+        margin: 0;
+        font-size: 1.9rem;
+        font-weight: 600;
+    }
+    .kpi-card p {
+        color: #6B7280;
+        font-size: 0.8rem;
+        margin: 0.2rem 0 0;
+    }
+    .kpi-high { color: #B91C1C; }
+    .kpi-blue { color: #1B3A5C; }
+    .kpi-amber { color: #B45309; }
+    .badge-high {
+        background: #FEE2E2;
+        color: #B91C1C;
+        padding: 2px 10px;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+    .badge-med {
+        background: #FEF3C7;
+        color: #B45309;
+        padding: 2px 10px;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+    .badge-low {
+        background: #DCFCE7;
+        color: #166534;
+        padding: 2px 10px;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
     .section-header {
         color: #1B3A5C;
         border-bottom: 2px solid #2E6B9E;
-        padding-bottom: 0.5rem;
-        margin: 1.5rem 0 1rem;
+        padding-bottom: 0.4rem;
+        margin: 1.5rem 0 0.75rem;
+        font-size: 1.1rem;
+        font-weight: 600;
+    }
+    .result-box {
+        border: 1px solid #E5E7EB;
+        border-radius: 10px;
+        padding: 1.25rem;
+        margin-bottom: 1rem;
+        background: white;
+    }
+    .action-call {
+        background: #FEE2E2;
+        color: #B91C1C;
+        padding: 4px 14px;
+        border-radius: 6px;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+    .action-sms {
+        background: #FEF3C7;
+        color: #B45309;
+        padding: 4px 14px;
+        border-radius: 6px;
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+    .action-monitor {
+        background: #DCFCE7;
+        color: #166534;
+        padding: 4px 14px;
+        border-radius: 6px;
+        font-size: 0.8rem;
+        font-weight: 600;
     }
 </style>
 """, unsafe_allow_html=True)
 
 
 # ──────────────────────────────────────────────
-# Data Loading (cached)
+# Data Loading
 # ──────────────────────────────────────────────
 
 @st.cache_data
@@ -74,221 +143,196 @@ def load_predictions():
 def load_top30():
     return pd.read_csv("predictions/top_30_high_risk.csv", index_col=0)
 
-@st.cache_resource
-def load_model_artifacts():
-    with open("models/best_model.pkl", "rb") as f:
-        model = pickle.load(f)
-    with open("models/model_metadata.pkl", "rb") as f:
-        meta = pickle.load(f)
-    with open("models/all_results.pkl", "rb") as f:
-        results = pickle.load(f)
-    return model, meta, results
+
+# ──────────────────────────────────────────────
+# Helper Functions
+# ──────────────────────────────────────────────
+
+def get_risk_level(prob):
+    if prob > 70:
+        return "High", "badge-high"
+    elif prob > 50:
+        return "Medium", "badge-med"
+    else:
+        return "Low", "badge-low"
+
+def get_action(prob):
+    if prob > 70:
+        return "Call now", "action-call"
+    elif prob > 50:
+        return "Send SMS", "action-sms"
+    else:
+        return "Monitor", "action-monitor"
+
+def color_prob(val):
+    if val > 70:
+        return "background-color: #FEE2E2; color: #B91C1C; font-weight: bold"
+    elif val > 50:
+        return "background-color: #FEF3C7; color: #B45309; font-weight: bold"
+    return "background-color: #DCFCE7; color: #166534; font-weight: bold"
 
 
 # ──────────────────────────────────────────────
-# Load all data
+# Load Data
 # ──────────────────────────────────────────────
 
 try:
     scored_df = load_predictions()
-    top30_df = load_top30()
-    model, model_meta, all_results = load_model_artifacts()
+    top30_df  = load_top30()
     data_loaded = True
 except FileNotFoundError as e:
     data_loaded = False
-    st.error(f"Required files not found. Please run `model_training.py` and `predict.py` first.\n\nMissing: {e}")
+    st.error(
+        f"Required files not found. Please run `model_training.py` and `predict.py` first.\n\nMissing: {e}"
+    )
 
+
+# ──────────────────────────────────────────────
+# Dashboard
+# ──────────────────────────────────────────────
 
 if data_loaded:
 
-    # ══════════════════════════════════════════
-    # HEADER
-    # ══════════════════════════════════════════
+    # ── Header ──────────────────────────────────
 
-    st.markdown(f"""
+    st.markdown("""
     <div class="main-header">
-        <h1>Patient No-Show Risk Dashboard</h1>
-        <p>Model: {model_meta['best_model_name']} | Trained: {model_meta['trained_at'][:19]} |
-        Features: {len(model_meta['feature_columns'])}</p>
+        <h1>🏥 Patient No-Show Risk Dashboard</h1>
+        <p>Identify high-risk patients and prioritize proactive outreach before their appointment.</p>
     </div>
     """, unsafe_allow_html=True)
 
-    # ══════════════════════════════════════════
-    # KPI CARDS
-    # ══════════════════════════════════════════
+    # ── KPI Cards ───────────────────────────────
 
-    total = len(scored_df)
-    threshold = 50
-    predicted_noshow = (scored_df["noshow_probability"] > threshold).sum()
-    noshow_rate = predicted_noshow / total * 100
-    auc_score = model_meta["metrics"]["auc_roc"]
+    total          = len(scored_df)
+    high_risk      = int((scored_df["noshow_probability"] > 70).sum())
+    predicted_ns   = int((scored_df["noshow_probability"] > 50).sum())
+    noshow_rate    = round(predicted_ns / total * 100, 1)
 
-    k1, k2, k3, k4 = st.columns(4)
+    k1, k2, k3 = st.columns(3)
+
     with k1:
-        st.markdown(f'<div class="kpi-card"><h3>{total:,}</h3><p>Total Appointments</p></div>', unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class="kpi-card">
+            <h3 class="kpi-blue">{total:,}</h3>
+            <p>Total appointments</p>
+        </div>""", unsafe_allow_html=True)
+
     with k2:
-        st.markdown(f'<div class="kpi-card"><h3>{predicted_noshow:,}</h3><p>Predicted No-Shows (>{threshold}%)</p></div>', unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class="kpi-card">
+            <h3 class="kpi-high">{high_risk:,}</h3>
+            <p>High risk (&gt;70% probability)</p>
+        </div>""", unsafe_allow_html=True)
+
     with k3:
-        st.markdown(f'<div class="kpi-card"><h3>{noshow_rate:.1f}%</h3><p>Predicted No-Show Rate</p></div>', unsafe_allow_html=True)
-    with k4:
-        st.markdown(f'<div class="kpi-card"><h3>{auc_score:.4f}</h3><p>Model AUC-ROC</p></div>', unsafe_allow_html=True)
+        st.markdown(f"""
+        <div class="kpi-card">
+            <h3 class="kpi-amber">{noshow_rate}%</h3>
+            <p>Predicted no-show rate (&gt;50%)</p>
+        </div>""", unsafe_allow_html=True)
 
     st.markdown("")
 
-    # ══════════════════════════════════════════
-    # TOP 30 HIGH-RISK PATIENTS
-    # ══════════════════════════════════════════
+    # ── Patient Lookup ───────────────────────────
 
-    st.markdown('<h2 class="section-header">Top 30 High-Risk Patients</h2>', unsafe_allow_html=True)
-    st.caption("Patients most likely to miss their appointment — prioritize for proactive call/SMS outreach.")
+    st.markdown('<div class="section-header">Patient Lookup</div>', unsafe_allow_html=True)
+    st.caption("Enter a Patient ID to view their risk score, appointment details, and recommended action.")
 
-    # Build display dataframe
-    display_df = top30_df.copy()
-    display_df.columns = ["Patient ID", "Appointment ID", "Appointment Day",
-                          "No-Show Prob (%)", "Top 3 SHAP Risk Factors"]
-
-    # Format patient ID as integer string
-    display_df["Patient ID"] = display_df["Patient ID"].apply(lambda x: f"{x:.0f}")
-    display_df["Appointment ID"] = display_df["Appointment ID"].apply(lambda x: f"{x:.0f}")
-
-    def color_risk(val):
-        if val > 70:
-            return "background-color: #FFCCCC; color: #CC0000; font-weight: bold"
-        elif val > 50:
-            return "background-color: #FFE0B2; color: #E65100; font-weight: bold"
-        elif val > 30:
-            return "background-color: #FFF9C4; color: #F57F17; font-weight: bold"
-        return ""
-
-    styled = display_df.style.applymap(color_risk, subset=["No-Show Prob (%)"])
-    st.dataframe(styled, use_container_width=True, height=600)
-
-    # ══════════════════════════════════════════
-    # MODEL PERFORMANCE COMPARISON
-    # ══════════════════════════════════════════
-
-    st.markdown('<h2 class="section-header">Model Performance Comparison</h2>', unsafe_allow_html=True)
-
-    col_metrics, col_roc = st.columns([1, 1.2])
-
-    with col_metrics:
-        st.subheader("Metrics Comparison")
-        comp_data = []
-        for name, res in all_results.items():
-            m = res["metrics"]
-            comp_data.append({
-                "Model": name,
-                "AUC-ROC": f"{m['auc_roc']:.4f}",
-                "Recall (No-Show)": f"{m['recall_noshow']:.4f}",
-                "Precision (No-Show)": f"{m['precision_noshow']:.4f}",
-                "F1 (No-Show)": f"{m['f1_noshow']:.4f}",
-                "F1 (Weighted)": f"{m['f1_weighted']:.4f}",
-                "Train Time (s)": f"{res['train_time']:.2f}",
-            })
-        comp_df = pd.DataFrame(comp_data)
-        st.dataframe(comp_df, use_container_width=True, hide_index=True)
-
-        # Highlight best
-        best_name = model_meta["best_model_name"]
-        st.success(f"**Best model (by recall):** {best_name} — Recall = {all_results[best_name]['metrics']['recall_noshow']:.4f}")
-
-    with col_roc:
-        st.subheader("ROC Curves")
-        if os.path.exists("artifacts/roc_curve_comparison.png"):
-            st.image("artifacts/roc_curve_comparison.png", use_container_width=True)
-        else:
-            st.info("ROC curve plot not found. Run model_training.py to generate.")
-
-    # Confusion matrices side by side
-    st.subheader("Confusion Matrices")
-    cm_cols = st.columns(len(all_results))
-    for i, (name, res) in enumerate(all_results.items()):
-        with cm_cols[i]:
-            cm_path = f"artifacts/{name}_confusion_matrix.png"
-            if os.path.exists(cm_path):
-                st.image(cm_path, caption=name, use_container_width=True)
-
-    # ══════════════════════════════════════════
-    # FEATURE IMPORTANCE (SHAP)
-    # ══════════════════════════════════════════
-
-    st.markdown('<h2 class="section-header">Feature Importance (SHAP)</h2>', unsafe_allow_html=True)
-
-    shap_cols = st.columns(len(all_results))
-    for i, (name, res) in enumerate(all_results.items()):
-        with shap_cols[i]:
-            shap_path = f"artifacts/{name}_shap_summary.png"
-            if os.path.exists(shap_path):
-                st.image(shap_path, caption=f"SHAP Summary: {name}", use_container_width=True)
-
-    # Top features bar chart for best model
-    st.subheader(f"Top 10 Features — {best_name}")
-    imp_df = all_results[best_name]["importance"].head(10)
-
-    fig, ax = plt.subplots(figsize=(8, 4))
-    bars = ax.barh(imp_df["feature"][::-1], imp_df["mean_abs_shap"][::-1], color="#2E6B9E")
-    ax.set_xlabel("Mean |SHAP Value|")
-    ax.set_title(f"Top 10 Features Driving No-Show Risk ({best_name})")
-    ax.grid(axis="x", alpha=0.3)
-    plt.tight_layout()
-    st.pyplot(fig)
-    plt.close()
-
-    # ══════════════════════════════════════════
-    # PATIENT LOOKUP
-    # ══════════════════════════════════════════
-
-    st.markdown('<h2 class="section-header">Patient Lookup</h2>', unsafe_allow_html=True)
-    st.caption("Enter a Patient ID to view their individual risk score, appointment details, and risk factors.")
-
-    patient_input = st.text_input("Patient ID", placeholder="e.g., 38786636279984")
+    patient_input = st.text_input("Patient ID", placeholder="e.g. 38786636279984", label_visibility="collapsed")
 
     if patient_input:
         try:
             pid = float(patient_input)
-            patient_rows = scored_df[scored_df["patient_id"] == pid]
+            matches = scored_df[scored_df["patient_id"] == pid]
 
-            if len(patient_rows) == 0:
+            if len(matches) == 0:
                 st.warning(f"No appointments found for Patient ID: {patient_input}")
             else:
-                st.success(f"Found {len(patient_rows)} appointment(s) for Patient ID: {patient_input}")
+                st.success(f"Found {len(matches)} appointment(s) for Patient ID: {patient_input}")
 
-                for _, row in patient_rows.iterrows():
-                    prob = row["noshow_probability"]
-                    if prob > 70:
-                        risk_label = "HIGH RISK"
-                        risk_color = "#CC0000"
-                    elif prob > 50:
-                        risk_label = "MEDIUM RISK"
-                        risk_color = "#E65100"
-                    elif prob > 30:
-                        risk_label = "LOW-MEDIUM RISK"
-                        risk_color = "#F57F17"
-                    else:
-                        risk_label = "LOW RISK"
-                        risk_color = "#2E7D32"
+                for _, row in matches.iterrows():
+                    prob              = row["noshow_probability"]
+                    risk_label, risk_cls  = get_risk_level(prob)
+                    action_label, action_cls = get_action(prob)
+                    appt_day          = str(row.get("appointment_day", "N/A"))[:10]
+                    risk_factors      = row.get("shap_risk_factors", "N/A")
 
-                    c1, c2, c3 = st.columns(3)
+                    c1, c2, c3, c4 = st.columns(4)
                     with c1:
                         st.metric("No-Show Probability", f"{prob:.1f}%")
                     with c2:
                         st.metric("Risk Level", risk_label)
                     with c3:
-                        st.metric("Appointment Day", str(row.get("appointment_day", "N/A"))[:10])
+                        st.metric("Appointment Day", appt_day)
+                    with c4:
+                        st.metric("Recommended Action", action_label)
 
-                    # Risk factors
-                    st.markdown(f"**SHAP Risk Factors:** {row.get('shap_risk_factors', 'N/A')}")
-
-                    # Progress bar for probability
                     st.progress(min(prob / 100, 1.0))
+                    st.caption(f"**Risk factors:** {risk_factors}")
                     st.divider()
 
         except ValueError:
             st.error("Please enter a valid numeric Patient ID.")
 
-    # ══════════════════════════════════════════
-    # FOOTER
-    # ══════════════════════════════════════════
+    # ── Top 30 High-Risk Table ───────────────────
+
+    st.markdown('<div class="section-header">Top 30 High-Risk Patients</div>', unsafe_allow_html=True)
+    st.caption("Patients most likely to miss their appointment — prioritize for proactive call or SMS outreach.")
+
+    # Risk filter
+    risk_filter = st.radio(
+        "Filter by risk level",
+        options=["All", "High (>70%)", "Medium (50–70%)", "Low (<50%)"],
+        horizontal=True,
+        label_visibility="collapsed",
+    )
+
+    display_df = top30_df.copy()
+
+    # Rename columns for display
+    display_df.columns = [
+        "Patient ID", "Appointment ID", "Appointment Day",
+        "No-Show Prob (%)", "Top Risk Factors"
+    ]
+
+    # Format IDs as integers
+    display_df["Patient ID"]      = display_df["Patient ID"].apply(lambda x: f"{x:.0f}")
+    display_df["Appointment ID"]  = display_df["Appointment ID"].apply(lambda x: f"{x:.0f}")
+
+    # Add risk level column
+    display_df["Risk Level"] = display_df["No-Show Prob (%)"].apply(
+        lambda p: get_risk_level(p)[0]
+    )
+
+    # Add recommended action column
+    display_df["Action"] = display_df["No-Show Prob (%)"].apply(
+        lambda p: get_action(p)[0]
+    )
+
+    # Apply filter
+    if risk_filter == "High (>70%)":
+        display_df = display_df[display_df["No-Show Prob (%)"] > 70]
+    elif risk_filter == "Medium (50–70%)":
+        display_df = display_df[
+            (display_df["No-Show Prob (%)"] > 50) & (display_df["No-Show Prob (%)"] <= 70)
+        ]
+    elif risk_filter == "Low (<50%)":
+        display_df = display_df[display_df["No-Show Prob (%)"] <= 50]
+
+    # Style the probability column
+    styled = (
+        display_df.style
+        .applymap(color_prob, subset=["No-Show Prob (%)"])
+    )
+
+    st.dataframe(styled, use_container_width=True, hide_index=True, height=600)
+    st.caption(f"Showing {len(display_df)} patient(s)")
+
+    # ── Footer ───────────────────────────────────
 
     st.markdown("---")
-    st.caption("Patient No-Show Prediction System | ML Design Final Project | University of Cincinnati, Lindner College of Business")
+    st.caption(
+        "Patient No-Show Prediction System | ML Design Final Project | "
+        "University of Cincinnati, Lindner College of Business"
+    )
