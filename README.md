@@ -42,6 +42,11 @@ pip install -r requirements.txt
 
 3. Place the dataset (`healthcare_noshows_appt.csv`) in the project root.
 
+4. Run this line to start up the ml flow dashboard:
+```bash
+mlflow server --backend-store-uri sqlite:///mlflow.db --default-artifact-root ./mlruns --host 127.0.0.1 --port 5000
+```
+
 ## Running the Pipeline
 
 Run scripts in order:
